@@ -1,0 +1,144 @@
+#EC2 donde selecciono el ambiente por parametro, y este valor esta mapeado a un tipo de instancia via el nombre
+#Selecciono KeyPair por parametro, agrego SG con http y SSH, y selecciono ImageId segun la region donde este ejecutando.
+#Crea elasticIP si el ambiente es produccion asi tiene salida estatica a internet.
+#Estos valores exportados pueden ser tomados por otro stack con !ImportValue y usar algo definido en otro.
+#Si hay un export referenciado en otro stack, no se puede borrar el stack. El export es global, y el output para nested-stacks
+#Con el export/output podemos agarrar la url de la instancia creada para hacer algo luego
+#Con el UserData la funcion Base64 sub y el | podemos pasar instrucciones a ejecutar cuando inicia la instancia.
+Parameters: 
+  myKeyPair: 
+    Description: Amazon EC2 Key Pair
+    Type: "AWS::EC2::KeyPair::KeyName"
+  MyAvailabilityZone:
+    Type: String
+    Default: us-east-2a
+    AllowedValues:
+      - us-east-1a
+      - us-east-1b
+      - us-east-2a
+      - us-east-2b
+    Description: Select the AZ	
+  EnvironmentName: 
+    Description: Select the environment
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+Mappings: 
+  RegionMap: 
+    us-east-1:
+      HVM64: ami-0ff8a91507f77f867
+      HVMG2: ami-0a584ac55a7631c0c
+    us-east-2:
+      HVM64: ami-0cd3dfa4e37921605
+      HVMG2: ami-066ee5fd4a9ef77f1	
+  EnvironmentMap: 
+    dev:
+      instanceType: t2.micro
+    prod:
+      instanceType: t2.small
+Conditions:
+  CreateEIPForProd: !Equals [!Ref EnvironmentName, prod]
+Resources:
+  MyCICDEC2InstanceProfileRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:   
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow  
+          Principal:
+            Service:
+              - ec2.amazonaws.com
+          Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: MyCICDEC2InstanceProfilePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow  
+                Action:     
+                  - 's3:Get*'
+                  - 's3:List*'
+                Resource: '*'
+  MyInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref MyCICDEC2InstanceProfileRole   
+  EC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Allow http and SSH to client host
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0          
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0		  
+  Ec2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !FindInMap
+        - EnvironmentMap
+        - !Ref EnvironmentName
+        - instanceType
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", HVM64]
+      KeyName : guidoaction	
+      IamInstanceProfile: !Ref MyInstanceProfile
+      UserData:
+        'Fn::Base64': !Sub |
+          #!/bin/bash
+          sudo yum update
+          sudo yum install ruby
+          sudo yum install wget          
+          # install apache
+          sudo echo "pase" > text.txt
+          sudo yum -y erase java-1.7.0-openjdk.x86_64
+          sudo yum -y install java-1.8.0-openjdk.x86_64          
+          sudo yum -y install java-1.8.0-openjdk-devel
+          sudo yum -y install tomcat8
+          cd /home/ec2-user
+          wget https://aws-codedeploy-us-east-2.s3.amazonaws.com/latest/install
+          chmod +x ./install
+          sudo ./install auto
+      SecurityGroups:
+        - !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: My EC2 Instance
+        - Key: Type
+          Value: Worker Instance
+  MyProdEIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateEIPForProd
+    Properties:
+      InstanceId: !Ref Ec2Instance
+Outputs:      
+  MyInstanceId:
+    Description: My instance id
+    Value: !Ref Ec2Instance
+  MyDNSName:
+    Description: My public DNS Name
+    Value: !GetAtt Ec2Instance.PublicDnsName  
+  MyInstanceAvailabilityZone:
+    Description: Instance AZ
+    Value: !GetAtt Ec2Instance.AvailabilityZone   
+    Export:
+      Name: !Sub "${AWS::StackName}-InstanceAz"
+  MyDevGlobalSecurityGroup:
+    Description: My dev SG
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: MyDevSSHGlobalSG    
+    

@@ -1,0 +1,76 @@
+#EC2 donde selecciono el ambiente por parametro, y este valor esta mapeado a un tipo de instancia via el nombre
+#Selecciono KeyPair por parametro, agrego SG con http y SSH, y selecciona ImageId segun la region donde este ejecutando.
+Parameters: 
+  myKeyPair: 
+    Description: Amazon EC2 Key Pair
+    Type: "AWS::EC2::KeyPair::KeyName"
+  MyAvailabilityZone:
+    Type: String
+    Default: us-east-2a
+    AllowedValues:
+      - us-east-1a
+      - us-east-1b
+      - us-east-2a
+      - us-east-2b
+    Description: Select the AZ	
+  EnvironmentName: 
+    Description: Select the environment
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+Mappings: 
+  RegionMap: 
+    us-east-1:
+      HVM64: ami-0ff8a91507f77f867
+      HVMG2: ami-0a584ac55a7631c0c
+    us-east-2:
+      HVM64: ami-0cd3dfa4e37921605
+      HVMG2: ami-066ee5fd4a9ef77f1	
+  EnvironmentMap: 
+    dev:
+      instanceType: t2.micro
+    prod:
+      instanceType: t2.small
+Resources:
+  EC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Allow http and SSH to client host
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0		  
+  Ec2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !FindInMap
+        - EnvironmentMap
+        - !Ref EnvironmentName
+        - instanceType
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", HVM64]
+      KeyName : guidoaction	  	  
+      UserData:
+        'Fn::Base64': !Sub |
+          #!/bin/bash
+          yum -y update
+
+          # install apache
+          yum install httpd24 -y  
+
+          # start server
+          service httpd start
+          chkconfig httpd on
+      SecurityGroups:
+        - !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: My EC2 Instance
+        - Key: Type
+          Value: Worker Instance
